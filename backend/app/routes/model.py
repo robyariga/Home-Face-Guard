@@ -16,6 +16,7 @@ import time
 from flask import Blueprint, jsonify, request
 
 from .. import face_engine
+from ..security import limiter
 
 model_bp = Blueprint("model", __name__)
 
@@ -31,8 +32,6 @@ def model_status():
     info = {
         "model_exists": model_exists,
         "labels_exists": labels_exists,
-        "model_path": str(face_engine.MODEL_PATH),
-        "labels_path": str(face_engine.LABELS_PATH),
         "lbph_threshold": face_engine.get_env_float("LBPH_THRESHOLD", 60.0),
         "max_train_images_per_person": face_engine.get_env_int(
             "MAX_TRAIN_IMAGES_PER_PERSON", 200
@@ -48,6 +47,7 @@ def model_status():
 
 
 @model_bp.route("/train", methods=["POST"])
+@limiter.limit("6 per minute")
 def train_model():
     """POST /api/train
 
@@ -55,6 +55,8 @@ def train_model():
     - max_images_per_person: int
     """
     payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify(message="JSON object required"), 400
     max_imgs = payload.get("max_images_per_person")
 
     if max_imgs is None:
@@ -72,5 +74,7 @@ def train_model():
         summary = face_engine.train_lbph_model(max_images_per_person=max_imgs)
         summary["elapsed_seconds"] = round(time.time() - started, 3)
         return jsonify({"message": "Training selesai", "summary": summary}), 200
-    except Exception as e:
-        return jsonify({"message": f"Training gagal: {e}"}), 500
+    except ValueError:
+        return jsonify(message="No usable registered face samples"), 422
+    except Exception:
+        return jsonify(message="Training failed; inspect server diagnostics"), 503

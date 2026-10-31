@@ -14,7 +14,13 @@ Catatan:
 from __future__ import annotations
 
 import os
-import pickle
+import json
+import math
+import threading
+import uuid
+import hashlib
+from io import BytesIO
+from PIL import Image, UnidentifiedImageError
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,23 +40,24 @@ from werkzeug.utils import secure_filename
 # ---------------------------------------------------------------------
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent  # .../backend
-DATASET_DIR = BACKEND_DIR / "dataset"
+DATASET_DIR = Path(os.getenv("HFG_DATA_DIR", str(BACKEND_DIR / "dataset"))).resolve()
+STATE_LOCK = threading.RLock()
 FACES_DIR = DATASET_DIR / "faces"
 MODELS_DIR = DATASET_DIR / "models"
 SNAPSHOTS_DIR = DATASET_DIR / "snapshots"
 
 MODEL_PATH = MODELS_DIR / "lbph_model.yml"
-LABELS_PATH = MODELS_DIR / "labels.pkl"
+LABELS_PATH = MODELS_DIR / "labels.json"
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 
 
 def ensure_dirs() -> None:
     """Pastikan folder dataset penting tersedia."""
-    DATASET_DIR.mkdir(parents=True, exist_ok=True)
-    FACES_DIR.mkdir(parents=True, exist_ok=True)
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    DATASET_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    FACES_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
 
 
 def make_safe_name(name: str) -> str:
@@ -61,8 +68,12 @@ def make_safe_name(name: str) -> str:
     - normalisasi underscore/spasi
     - hilangkan titik
     """
+    if not isinstance(name, str) or not name.strip() or len(name) > 120:
+        raise ValueError("Name must contain 1-120 characters")
     safe = secure_filename(name)
     safe = safe.replace("_", " ").replace(".", "").strip().replace(" ", "_")
+    if not safe or safe.casefold() in {"unknown", "event"}:
+        raise ValueError("Name cannot be empty after normalization or reserved")
     return safe
 
 
@@ -72,7 +83,9 @@ _FACE_CASCADE = None
 def _get_face_cascade():
     global _FACE_CASCADE
     if cv2 is None:
-        raise RuntimeError("OpenCV (cv2) belum tersedia. Install opencv-contrib-python.")
+        raise RuntimeError(
+            "OpenCV (cv2) belum tersedia. Install opencv-contrib-python."
+        )
     if _FACE_CASCADE is None:
         _FACE_CASCADE = cv2.CascadeClassifier(
             cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
@@ -108,7 +121,9 @@ def detect_largest_face_gray(
 ) -> Optional[Tuple[np.ndarray, Tuple[int, int, int, int]]]:
     """Deteksi wajah terbesar, return face_gray (200x200) dan bbox."""
     if cv2 is None:
-        raise RuntimeError("OpenCV (cv2) belum tersedia. Install opencv-contrib-python.")
+        raise RuntimeError(
+            "OpenCV (cv2) belum tersedia. Install opencv-contrib-python."
+        )
 
     cascade = _get_face_cascade()
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
@@ -159,7 +174,9 @@ def detect_faces_gray(
     Urutan list mengikuti hasil detektor (umumnya left->right), tetapi tidak dijamin.
     """
     if cv2 is None:
-        raise RuntimeError("OpenCV (cv2) belum tersedia. Install opencv-contrib-python.")
+        raise RuntimeError(
+            "OpenCV (cv2) belum tersedia. Install opencv-contrib-python."
+        )
 
     cascade = _get_face_cascade()
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
@@ -177,7 +194,7 @@ def detect_faces_gray(
         return []
 
     out: List[Tuple[np.ndarray, Tuple[int, int, int, int]]] = []
-    for (x, y, w, h) in faces:
+    for x, y, w, h in faces:
         # Kembalikan bbox ke koordinat original
         x, y, w, h = int(x * inv), int(y * inv), int(w * inv), int(h * inv)
 
@@ -232,19 +249,26 @@ def save_processed_faces(
     - total: total file wajah yang ada di folder setelah proses (bukan jumlah upload)
     """
     if cv2 is None:
-        raise RuntimeError("OpenCV (cv2) belum tersedia. Install opencv-contrib-python.")
+        raise RuntimeError(
+            "OpenCV (cv2) belum tersedia. Install opencv-contrib-python."
+        )
 
     ensure_dirs()
 
     safe_name = make_safe_name(resident_name)
     resident_dir = FACES_DIR / safe_name
-    resident_dir.mkdir(parents=True, exist_ok=True)
+    if resident_dir.is_symlink():
+        raise ValueError("Symlink datasets are not supported")
+    if count_faces(resident_name) >= 1000:
+        raise ValueError("Dataset limit reached (1000 images per resident)")
+    resident_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    invalidate_model()
 
     existing = len(
         [
             p
             for p in resident_dir.iterdir()
-            if p.is_file() and p.suffix.lower() in IMAGE_EXTS
+            if p.is_file() and not p.is_symlink() and p.suffix.lower() in IMAGE_EXTS
         ]
     )
 
@@ -252,21 +276,21 @@ def save_processed_faces(
     skipped = 0
 
     for b in image_bytes_iter:
-        arr = np.frombuffer(b, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if existing + saved >= 1000:
+            break
+        img = decode_image(b)
         if img is None:
             skipped += 1
             continue
 
-        detected = detect_largest_face_gray(img)
-        if detected is None:
+        detected_faces = detect_faces_gray(img)
+        if len(detected_faces) != 1:
             skipped += 1
             continue
 
-        face_gray, _bbox = detected
+        face_gray, _bbox = detected_faces[0]
 
-        idx = existing + saved + 1
-        file_path = resident_dir / f"{safe_name}_{idx}.jpeg"
+        file_path = resident_dir / f"{safe_name}_{uuid.uuid4().hex}.jpeg"
 
         ok = cv2.imwrite(str(file_path), face_gray)
         if not ok:
@@ -296,9 +320,12 @@ def train_lbph_model(max_images_per_person: int = 200) -> Dict[str, object]:
     Return dict berisi path model & ringkasan jumlah data.
     """
     if cv2 is None:
-        raise RuntimeError("OpenCV (cv2) belum tersedia. Install opencv-contrib-python.")
+        raise RuntimeError(
+            "OpenCV (cv2) belum tersedia. Install opencv-contrib-python."
+        )
 
     ensure_dirs()
+    invalidate_model()
 
     # Pastikan modul cv2.face ada (dari opencv-contrib)
     if not hasattr(cv2, "face"):
@@ -314,7 +341,14 @@ def train_lbph_model(max_images_per_person: int = 200) -> Dict[str, object]:
     y_labels: List[int] = []
 
     # Folder per orang = 1 kelas
-    person_dirs = [p for p in FACES_DIR.iterdir() if p.is_dir()]
+    from .database import get_all_residents
+
+    allowed = {make_safe_name(r["name"]) for r in get_all_residents()}
+    person_dirs = [
+        p
+        for p in FACES_DIR.iterdir()
+        if p.is_dir() and not p.is_symlink() and p.name in allowed
+    ]
     person_dirs.sort(key=lambda p: p.name.lower())
 
     for person_dir in person_dirs:
@@ -327,7 +361,7 @@ def train_lbph_model(max_images_per_person: int = 200) -> Dict[str, object]:
         img_paths = [
             p
             for p in person_dir.iterdir()
-            if p.is_file() and p.suffix.lower() in IMAGE_EXTS
+            if p.is_file() and not p.is_symlink() and p.suffix.lower() in IMAGE_EXTS
         ]
         img_paths.sort(key=lambda p: p.name)
         img_paths = _sample_paths(img_paths, max_images_per_person)
@@ -353,11 +387,20 @@ def train_lbph_model(max_images_per_person: int = 200) -> Dict[str, object]:
     recognizer.train(x_arr, y_arr)
     train_seconds = time.time() - started
 
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    recognizer.write(str(MODEL_PATH))
-
-    with open(LABELS_PATH, "wb") as f:
-        pickle.dump(label_ids, f)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temp_model = MODELS_DIR / "pending.yml"
+    temp_labels = MODELS_DIR / "pending.json"
+    try:
+        recognizer.write(str(temp_model))
+        digest = hashlib.sha256(temp_model.read_bytes()).hexdigest()
+        temp_labels.write_text(
+            json.dumps({"labels": label_ids, "model_sha256": digest}), encoding="utf-8"
+        )
+        os.replace(temp_model, MODEL_PATH)
+        os.replace(temp_labels, LABELS_PATH)
+    finally:
+        temp_model.unlink(missing_ok=True)
+        temp_labels.unlink(missing_ok=True)
 
     return {
         "model_path": str(MODEL_PATH),
@@ -380,7 +423,9 @@ class LoadedLBPHModel:
 def load_lbph_model(threshold: float = 60.0) -> LoadedLBPHModel:
     """Load model LBPH yang sudah dilatih."""
     if cv2 is None:
-        raise RuntimeError("OpenCV (cv2) belum tersedia. Install opencv-contrib-python.")
+        raise RuntimeError(
+            "OpenCV (cv2) belum tersedia. Install opencv-contrib-python."
+        )
 
     if not MODEL_PATH.exists() or not LABELS_PATH.exists():
         raise FileNotFoundError(
@@ -395,12 +440,27 @@ def load_lbph_model(threshold: float = 60.0) -> LoadedLBPHModel:
     recognizer = cv2.face.LBPHFaceRecognizer_create()
     recognizer.read(str(MODEL_PATH))
 
-    with open(LABELS_PATH, "rb") as f:
-        label_ids: Dict[str, int] = pickle.load(f)
-
+    metadata = json.loads(LABELS_PATH.read_text(encoding="utf-8"))
+    label_ids = metadata["labels"]
+    if (
+        not isinstance(label_ids, dict)
+        or not label_ids
+        or any(
+            not isinstance(k, str) or type(v) is not int or v < 0
+            for k, v in label_ids.items()
+        )
+        or len(set(label_ids.values())) != len(label_ids)
+    ):
+        raise ValueError("Invalid label mapping")
+    if hashlib.sha256(MODEL_PATH.read_bytes()).hexdigest() != metadata.get(
+        "model_sha256"
+    ):
+        raise ValueError("Model and labels do not match; retrain")
     id_to_label = {v: k for k, v in label_ids.items()}
 
-    return LoadedLBPHModel(recognizer=recognizer, id_to_label=id_to_label, threshold=float(threshold))
+    return LoadedLBPHModel(
+        recognizer=recognizer, id_to_label=id_to_label, threshold=float(threshold)
+    )
 
 
 def predict_face(
@@ -417,7 +477,13 @@ def predict_face(
     pred_id, confidence = model.recognizer.predict(face_gray_200)
     confidence_f = float(confidence)
 
-    if confidence_f >= model.threshold:
+    if not math.isfinite(confidence_f) or confidence_f < 0:
+        return "Unknown", 9999.0, True
+    if (
+        not math.isfinite(model.threshold)
+        or model.threshold <= 0
+        or confidence_f >= model.threshold
+    ):
         return "Unknown", confidence_f, True
 
     label = model.id_to_label.get(int(pred_id), "Unknown")
@@ -430,14 +496,24 @@ def predict_face(
 def save_snapshot(frame_bgr: np.ndarray, label: str) -> str:
     """Simpan snapshot untuk event log."""
     if cv2 is None:
-        raise RuntimeError("OpenCV (cv2) belum tersedia. Install opencv-contrib-python.")
+        raise RuntimeError(
+            "OpenCV (cv2) belum tersedia. Install opencv-contrib-python."
+        )
 
+    if os.getenv("HFG_SAVE_SNAPSHOTS", "0") != "1":
+        return None
     ensure_dirs()
+    from cleanup_snapshots import cleanup_snapshots
+
+    cleanup_snapshots(get_env_int("SNAPSHOT_RETENTION_DAYS", 2))
     ts = time.strftime("%Y%m%d_%H%M%S")
-    safe_label = make_safe_name(label) if label else "event"
-    filename = f"{ts}_{safe_label}.jpg"
+    safe_label = (
+        "Unknown" if label == "Unknown" else make_safe_name(label) if label else "event"
+    )
+    filename = f"{ts}_{safe_label}_{uuid.uuid4().hex}.jpg"
     out_path = SNAPSHOTS_DIR / filename
-    cv2.imwrite(str(out_path), frame_bgr)
+    if not cv2.imwrite(str(out_path), frame_bgr):
+        raise OSError("Snapshot write failed")
     return str(out_path)
 
 
@@ -453,3 +529,55 @@ def get_env_float(name: str, default: float) -> float:
         return float(os.getenv(name, str(default)))
     except ValueError:
         return default
+
+
+def decode_image(data: bytes):
+    """Validate dimensions before OpenCV allocates a decoded image."""
+    if not data or len(data) > 8 * 1024 * 1024:
+        raise ValueError("Image must be 1 byte to 8 MiB")
+    try:
+        with Image.open(BytesIO(data)) as image:
+            if (
+                image.format not in {"JPEG", "PNG"}
+                or image.width * image.height > 4_000_000
+            ):
+                raise ValueError("Only JPEG/PNG images up to 4 megapixels are accepted")
+            image.verify()
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as error:
+        raise ValueError("Invalid image") from error
+    result = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if result is None:
+        raise ValueError("Invalid image")
+    return result
+
+
+def invalidate_model():
+    """Erase derived biometric data before mutation, including legacy pickle."""
+    MODEL_PATH.unlink(missing_ok=True)
+    LABELS_PATH.unlink(missing_ok=True)
+    (MODELS_DIR / "labels.pkl").unlink(missing_ok=True)
+
+
+def resolve_identity(label, is_unknown):
+    """A model prediction can only refer to a currently enrolled resident."""
+    from .database import get_all_residents
+
+    current = {
+        make_safe_name(r["name"]): r["name"]
+        for r in get_all_residents()
+        if count_faces(r["name"]) > 0
+    }
+    if is_unknown or label not in current:
+        return "Unknown", "DITOLAK"
+    return current[label], "MASUK"
+
+
+def count_faces(name):
+    directory = FACES_DIR / make_safe_name(name)
+    if directory.is_symlink():
+        raise ValueError("Symlink datasets are not supported")
+    return sum(
+        1
+        for p in directory.glob("*")
+        if p.is_file() and not p.is_symlink() and p.suffix.lower() in IMAGE_EXTS
+    )

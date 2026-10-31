@@ -7,7 +7,10 @@ if (typeof fetchLogs === 'undefined') {
 } else {
     document.addEventListener('DOMContentLoaded', () => {
         renderLatestLogs();
-        startDashboardCamera();
+        document.getElementById('start-camera-btn')?.addEventListener('click', async () => {
+            await authReady;
+            if (sessionUser && confirm('Video akan dikirim ke server ini untuk pengenalan wajah dan pencatatan aktivitas. Semua orang yang terlihat harus menyetujuinya. Lanjutkan?')) startDashboardCamera();
+        });
     });
 }
 
@@ -134,7 +137,7 @@ function startRealtimeRecognitionFromDashboard(videoEl) {
 
             const dataUrl = captureCanvas.toDataURL('image/jpeg', 0.7);
 
-            const res = await fetch(MOCK_API_BASE + '/recognition/frame', {
+            const res = await apiRequest(MOCK_API_BASE + '/recognition/frame', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ image: dataUrl })
@@ -149,6 +152,11 @@ function startRealtimeRecognitionFromDashboard(videoEl) {
                 return;
             }
 
+            if (out && out.model_ready === false) {
+                setDashboardStatus('Model belum siap. Daftarkan wajah dan jalankan training.', false);
+                if (overlayCanvas && overlayCtx) clearOverlay(overlayCanvas, overlayCtx);
+                return;
+            }
             if (out && out.detected) {
                 // Tampilkan status ringkas: kategori + nama
                 const isKnown = out.name && out.name.toLowerCase() !== 'unknown' && out.status === 'MASUK';
@@ -272,8 +280,8 @@ async function renderLatestLogs() {
             const item = `
                 <li class="flex items-center justify-between bg-[#1f2430] p-3 rounded-lg border border-gray-700/50">
                     <div>
-                        <p class="font-semibold text-white">${log.name}</p>
-                        <span class="text-xs font-medium px-2 py-1 rounded-full ${statusClass}">${category}</span>
+                        <p class="font-semibold text-white">${escapeHtml(log.name)}</p>
+                        <span class="text-xs font-medium px-2 py-1 rounded-full ${statusClass}">${escapeHtml(category)}</span>
                     </div>
                     <p class="text-xs text-gray-400">${timeString}</p>
                 </li>

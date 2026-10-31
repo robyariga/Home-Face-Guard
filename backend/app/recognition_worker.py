@@ -1,174 +1,111 @@
-"""Background worker untuk realtime recognition.
+"""Optional single-process camera worker. Camera sources are server-configured."""
 
-Tujuan:
-- Membaca stream kamera lokal (default webcam index 0) atau RTSP
-- Deteksi wajah -> prediksi -> simpan event log (events table)
-- Simpan snapshot ke dataset/snapshots
-
-Worker ini optional: Anda bisa menyalakan/mematikan via endpoint:
-- POST /api/recognition/start
-- POST /api/recognition/stop
-- GET /api/recognition/status
-"""
-
-from __future__ import annotations
-
+import os
 import threading
 import time
-from typing import Any, Optional, Union
-
-try:
-    import cv2
-except Exception:  # pragma: no cover
-    cv2 = None  # type: ignore
-
-from . import face_engine
-from .database import add_event, get_all_residents
-
-
-def _parse_source(value: Any) -> Union[int, str]:
-    """Parse sumber kamera.
-
-    - "0" -> 0
-    - 0 -> 0
-    - "rtsp://..." -> "rtsp://..."
-    """
-    if value is None:
-        return 0
-    if isinstance(value, int):
-        return value
-    s = str(value).strip()
-    if s.isdigit():
-        return int(s)
-    return s
+from . import face_engine as engine
+from .database import add_event
 
 
 class RecognitionWorker:
-    def __init__(self, source: Union[int, str] = 0):
-        self.source: Union[int, str] = _parse_source(source)
-
+    def __init__(self):
         self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-
-        self.running: bool = False
-        self.last_error: Optional[str] = None
-
-        self._last_label: Optional[str] = None
-        self._last_log_ts: float = 0.0
-
-    def start(self, source: Any = None) -> bool:
-        if self.running:
-            return False
-
+        self._thread = None
+        self.running = False
         self.last_error = None
-        if source is not None:
-            self.source = _parse_source(source)
 
+    def start(self, source=None):
+        if self._thread and self._thread.is_alive():
+            return False
+        self.last_error = None
         self._stop_event.clear()
+        self.running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        self.running = True
         return True
 
-    def stop(self) -> bool:
+    def stop(self):
         if not self.running:
             return False
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=2)
-        self.running = False
+        # A blocking camera read can outlive the join; do not permit duplicate starts.
+        self.running = bool(self._thread and self._thread.is_alive())
         return True
 
     def status(self):
         return {
             "running": self.running,
-            "source": self.source,
+            "stopping": self.running and self._stop_event.is_set(),
+            "source": "server-configured",
             "last_error": self.last_error,
         }
 
     def _run(self):
-        if cv2 is None:
-            self.last_error = "OpenCV belum tersedia. Install opencv-contrib-python."
-            self.running = False
-            return
-
         cap = None
+        last_label, last_ts = None, 0.0
+        last_cleanup = 0.0
         try:
-            cap = cv2.VideoCapture(self.source)
+            source = os.getenv("CAMERA_SOURCE", "0")
+            source = int(source) if source.isdigit() else source
+            cap = engine.cv2.VideoCapture(source)
             if not cap.isOpened():
-                self.last_error = f"Gagal membuka kamera/stream: {self.source}"
-                self.running = False
-                return
-
-            # Pastikan model tersedia
-            try:
-                threshold = face_engine.get_env_float("LBPH_THRESHOLD", 65.0)
-                model = face_engine.load_lbph_model(threshold=threshold)
-            except FileNotFoundError:
-                # Coba training sekali jika model belum ada
-                max_imgs = face_engine.get_env_int("MAX_TRAIN_IMAGES_PER_PERSON", 200)
-                face_engine.train_lbph_model(max_images_per_person=max_imgs)
-                threshold = face_engine.get_env_float("LBPH_THRESHOLD", 65.0)
-                model = face_engine.load_lbph_model(threshold=threshold)
-
-            # Map safe_name -> nama asli dari DB, supaya UI tampil rapi
-            residents = get_all_residents()
-            safe_to_display = {
-                face_engine.make_safe_name(r["name"]): r["name"] for r in residents if r.get("name")
-            }
-
-            min_interval = face_engine.get_env_float("MIN_LOG_INTERVAL_SECONDS", 3.0)
-
+                raise RuntimeError("Camera unavailable")
             while not self._stop_event.is_set():
-                ret, frame = cap.read()
-                if not ret:
-                    time.sleep(0.1)
+                ok, frame = cap.read()
+                if not ok:
+                    self._stop_event.wait(0.1)
                     continue
-
-                detected = face_engine.detect_largest_face_gray(frame)
-                if detected is None:
+                if not engine.STATE_LOCK.acquire(timeout=0.2):
                     continue
+                try:
+                    faces = engine.detect_faces_gray(frame)
+                    if not faces:
+                        continue
+                    try:
+                        model = engine.load_lbph_model(
+                            engine.get_env_float("LBPH_THRESHOLD", 60.0)
+                        )
+                    except Exception:
+                        self.last_error = "Model unavailable; training required"
+                        continue
+                    self.last_error = None
+                    results = [
+                        engine.resolve_identity(label, unknown) + (conf,)
+                        for label, conf, unknown in (
+                            engine.predict_face(face, model) for face, _ in faces
+                        )
+                    ]
+                    # Unknown always takes precedence, consistently with browser mode.
+                    name, status, conf = next(
+                        (r for r in results if r[1] == "DITOLAK"), results[0]
+                    )
+                    now = time.monotonic()
+                    if now - last_cleanup >= 300:
+                        from cleanup_snapshots import cleanup_private_data
 
-                face_gray, _bbox = detected
-                label, conf, is_unknown = face_engine.predict_face(face_gray, model)
-
-                if is_unknown:
-                    display_name = "Unknown"
-                    status = "DITOLAK"
-                else:
-                    display_name = safe_to_display.get(label, label.replace("_", " "))
-                    status = "MASUK"
-
-                now = time.time()
-
-                # Debounce event log
-                if (
-                    display_name != self._last_label
-                    or (now - self._last_log_ts) >= min_interval
-                ):
-                    # Simpan snapshot hanya untuk UNKNOWN agar storage lebih hemat
-                    snapshot_path = None
-                    is_unknown = (str(display_name).strip().lower() == "unknown") or (status == "DITOLAK")
-                    if is_unknown:
-                        try:
-                            snapshot_path = face_engine.save_snapshot(frame, "Unknown")
-                        except Exception:
-                            snapshot_path = None
-
-                    add_event(display_name, status, conf, snapshot_path)
-
-                    self._last_label = display_name
-                    self._last_log_ts = now
-
-                # kecilkan CPU usage
-                time.sleep(0.05)
-
-        except Exception as e:
-            self.last_error = str(e)
+                        cleanup_private_data()
+                        last_cleanup = now
+                    if name != last_label or now - last_ts >= engine.get_env_float(
+                        "MIN_LOG_INTERVAL_SECONDS", 3
+                    ):
+                        snapshot = (
+                            engine.save_snapshot(frame, "Unknown")
+                            if status == "DITOLAK"
+                            else None
+                        )
+                        add_event(name, status, conf, snapshot)
+                        last_label, last_ts = name, now
+                finally:
+                    engine.STATE_LOCK.release()
+                self._stop_event.wait(0.05)
+        except Exception:
+            # Never expose camera URLs, credentials or local paths through the API.
+            self.last_error = (
+                "Recognition worker failed; check camera and model configuration"
+            )
         finally:
-            try:
-                if cap is not None:
-                    cap.release()
-            except Exception:
-                pass
+            if cap is not None:
+                cap.release()
             self.running = False

@@ -1,0 +1,21 @@
+name: Bug report
+description: Reproducible problems without private biometric data
+title: '[Bug] '
+body:
+  - type: markdown
+    attributes:
+      value: 'Never upload faces, models, databases, secrets or camera URLs. Use SECURITY.md for vulnerabilities.'
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and reproduction steps
+      description: Expected/actual behavior with synthetic examples.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python/package versions, commit and redacted errors.
+    validations:
+      required: true

@@ -2,15 +2,21 @@
 import sqlite3
 import os
 
-DATABASE_NAME = 'residents.db'
+DATABASE_NAME = "residents.db"
 # Tentukan path database relatif terhadap lokasi main.py
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), DATABASE_NAME)
+DB_PATH = (
+    os.path.join(os.environ["HFG_DATA_DIR"], DATABASE_NAME)
+    if os.getenv("HFG_DATA_DIR")
+    else os.path.join(os.path.dirname(os.path.abspath(__file__)), DATABASE_NAME)
+)
+
 
 def get_db_connection():
     """Membuat dan mengembalikan koneksi ke database."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     return conn
+
 
 def init_db():
     """Menginisialisasi tabel Residents & Events.
@@ -21,7 +27,7 @@ def init_db():
     """
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     # 1. Pastikan Tabel Utama dibuat
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS residents (
@@ -56,7 +62,13 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    
+
+    cursor.execute("""CREATE TABLE IF NOT EXISTS auth_sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        expires_at REAL NOT NULL
+    )""")
+
     # 2. PERBAIKAN KRITIS: Tambahkan kolom face_count jika belum ada (MIGRASI SKEMA)
     try:
         cursor.execute("SELECT face_count FROM residents LIMIT 1")
@@ -70,10 +82,15 @@ def init_db():
 
     conn.commit()
     conn.close()
-    print(f"Database {DATABASE_NAME} siap di: {DB_PATH}")
+    os.chmod(DB_PATH, 0o600)
 
 
-def add_event(name: str, status: str, confidence: float | None = None, snapshot_path: str | None = None) -> int | None:
+def add_event(
+    name: str,
+    status: str,
+    confidence: float | None = None,
+    snapshot_path: str | None = None,
+) -> int | None:
     """Simpan satu event log ke tabel events."""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -117,6 +134,7 @@ def get_event_by_id(event_id: int):
     conn.close()
     return dict(row) if row else None
 
+
 def add_resident(name, role, face_count):
     """Menyimpan data penghuni baru ke database."""
     conn = get_db_connection()
@@ -124,7 +142,7 @@ def add_resident(name, role, face_count):
     try:
         cursor.execute(
             "INSERT INTO residents (name, role, face_count) VALUES (?, ?, ?)",
-            (name, role, face_count)
+            (name, role, face_count),
         )
         conn.commit()
         resident_id = cursor.lastrowid
@@ -132,29 +150,37 @@ def add_resident(name, role, face_count):
         return resident_id
     except sqlite3.IntegrityError:
         conn.close()
-        return None # Nama sudah ada
+        return None  # Nama sudah ada
     except Exception as e:
         print(f"Database Error: {e}")
         conn.close()
         return None
 
+
 def get_resident_by_id(resident_id):
     """Mengambil data penghuni berdasarkan ID."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, role, face_count, created_at FROM residents WHERE id = ?", (resident_id,))
+    cursor.execute(
+        "SELECT id, name, role, face_count, created_at FROM residents WHERE id = ?",
+        (resident_id,),
+    )
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
+
 
 def get_all_residents():
     """Mengambil semua data penghuni."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, role, face_count, created_at FROM residents ORDER BY id DESC")
+    cursor.execute(
+        "SELECT id, name, role, face_count, created_at FROM residents ORDER BY id DESC"
+    )
     residents_data = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return residents_data
+
 
 def update_resident(resident_id, name, role, face_count):
     """Memperbarui data penghuni."""
@@ -163,18 +189,19 @@ def update_resident(resident_id, name, role, face_count):
     try:
         cursor.execute(
             "UPDATE residents SET name = ?, role = ?, face_count = ? WHERE id = ?",
-            (name, role, face_count, resident_id)
+            (name, role, face_count, resident_id),
         )
         conn.commit()
         conn.close()
-        return cursor.rowcount > 0 # Mengembalikan True jika ada baris yang diupdate
+        return cursor.rowcount > 0  # Mengembalikan True jika ada baris yang diupdate
     except sqlite3.IntegrityError:
         conn.close()
-        return False # Duplikasi nama
+        return False  # Duplikasi nama
     except Exception as e:
         print(f"Database Update Error: {e}")
         conn.close()
         return False
+
 
 def delete_resident(resident_id):
     """Menghapus data penghuni."""
@@ -183,14 +210,17 @@ def delete_resident(resident_id):
     cursor.execute("DELETE FROM residents WHERE id = ?", (resident_id,))
     conn.commit()
     conn.close()
-    return cursor.rowcount > 0 # Mengembalikan True jika ada baris yang dihapus
+    return cursor.rowcount > 0  # Mengembalikan True jika ada baris yang dihapus
 
 
 # ==========================
 # USERS (AUTH)
 # ==========================
 
-def add_user(name: str, email: str, password_hash: str, role: str = 'ADMIN') -> int | None:
+
+def add_user(
+    name: str, email: str, password_hash: str, role: str = "ADMIN"
+) -> int | None:
     """Menyimpan user baru ke database."""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -223,3 +253,71 @@ def get_user_by_email(email: str):
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def get_user_by_id(user_id):
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, name, email, role FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def new_auth_session(user_id):
+    import secrets
+    import hashlib
+    import time
+
+    token = secrets.token_urlsafe(32)
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "INSERT INTO auth_sessions VALUES (?, ?, ?)",
+            (
+                hashlib.sha256(token.encode()).hexdigest(),
+                user_id,
+                time.time() + 8 * 3600,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return token
+
+
+def valid_auth_session(user_id, token):
+    import hashlib
+    import time
+
+    if not isinstance(token, str):
+        return False
+    conn = get_db_connection()
+    try:
+        return (
+            conn.execute(
+                "SELECT 1 FROM auth_sessions WHERE token_hash = ? AND user_id = ? AND expires_at > ?",
+                (hashlib.sha256(token.encode()).hexdigest(), user_id, time.time()),
+            ).fetchone()
+            is not None
+        )
+    finally:
+        conn.close()
+
+
+def revoke_auth_session(token):
+    import hashlib
+
+    if not isinstance(token, str):
+        return
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "DELETE FROM auth_sessions WHERE token_hash = ?",
+            (hashlib.sha256(token.encode()).hexdigest(),),
+        )
+        conn.commit()
+    finally:
+        conn.close()

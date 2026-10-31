@@ -1,6 +1,7 @@
 // frontend/assets/js/edit.js
 
 document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('edit-resident-form')?.addEventListener('submit', e => {e.preventDefault(); updateResidentData(e);});
     loadResidentData();
 });
 
@@ -28,7 +29,7 @@ async function loadResidentData() {
 
     try {
         // GET /api/residents/<id>
-        const response = await fetch(MOCK_API_BASE + `/residents/${id}`);
+        const response = await apiRequest(MOCK_API_BASE + `/residents/${id}`);
         if (!response.ok) {
             throw new Error(`Gagal memuat data (Status: ${response.status})`);
         }
@@ -55,6 +56,10 @@ async function loadResidentData() {
         const scanButton = document.getElementById('start-scan-link');
         scanButton.onclick = () => {
             const currentName = document.getElementById('edit-resident-name').value.trim();
+            if (currentName !== currentResidentName) {
+                alert('Simpan perubahan nama sebelum memperbarui dataset wajah.');
+                return;
+            }
             window.location.href = `/scan?name=${encodeURIComponent(currentName)}&id=${resident.id}&mode=update`;
         };
         
@@ -97,6 +102,10 @@ async function updateResidentData(event) {
     submitButton.textContent = 'Memvalidasi...';
 
     try {
+        if (photoInput.files.length && newName !== document.getElementById('initial-name').value) {
+            throw new Error('Simpan perubahan nama terlebih dahulu, lalu unggah foto baru.');
+        }
+        if (photoInput.files.length && !confirm('Saya telah memperoleh persetujuan penghuni untuk menyimpan foto wajahnya. Lanjutkan?')) return;
         // --- 1. Proses Upload File Baru Jika Ada ---
         if (photoInput.files.length > 0) {
             submitButton.textContent = 'Mengunggah Foto Baru...';
@@ -109,7 +118,7 @@ async function updateResidentData(event) {
                  formData.append('faces', file, file.name); 
             }
             
-            const uploadResponse = await fetch(MOCK_API_BASE + '/upload/faces', {
+            const uploadResponse = await apiRequest(MOCK_API_BASE + '/upload/faces', {
                  method: 'POST',
                  body: formData, 
             });
@@ -133,7 +142,7 @@ async function updateResidentData(event) {
         };
         
         // PUT /api/residents/<id>
-        const updateResponse = await fetch(MOCK_API_BASE + `/residents/${residentId}`, {
+        const updateResponse = await apiRequest(MOCK_API_BASE + `/residents/${residentId}`, {
             method: 'PUT', 
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(metadataUpdate),
@@ -180,7 +189,7 @@ async function deleteResidentDataset(event) {
     
     try {
         // Panggil API baru: DELETE /api/residents/dataset/<name>
-        const response = await fetch(MOCK_API_BASE + `/residents/dataset/${encodeURIComponent(currentResidentName)}`, {
+        const response = await apiRequest(MOCK_API_BASE + `/residents/dataset/${encodeURIComponent(currentResidentName)}`, {
             method: 'DELETE'
         });
 
@@ -196,7 +205,7 @@ async function deleteResidentDataset(event) {
             face_count: 0 // Reset hitungan wajah
         };
         
-        const updateResponse = await fetch(MOCK_API_BASE + `/residents/${currentResidentId}`, {
+        const updateResponse = await apiRequest(MOCK_API_BASE + `/residents/${currentResidentId}`, {
             method: 'PUT', 
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(updateMetadata),

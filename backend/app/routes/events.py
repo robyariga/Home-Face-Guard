@@ -18,8 +18,10 @@ def _make_snapshot_url(snapshot_path: str | None) -> str | None:
         return None
     try:
         filename = Path(snapshot_path).name
-        base = request.host_url.rstrip("/")
-        return f"{base}/api/snapshots/{filename}"
+        candidate = face_engine.SNAPSHOTS_DIR / filename
+        if not candidate.is_file() or candidate.is_symlink():
+            return None
+        return f"/api/snapshots/{filename}"
     except Exception:
         return None
 
@@ -59,6 +61,7 @@ def get_logs():
         else:
             item["snapshot_url"] = None
 
+        item.pop("snapshot_path", None)
         out.append(item)
 
     return jsonify(out), 200
@@ -80,6 +83,7 @@ def get_event_detail(event_id: int):
     else:
         item["snapshot_url"] = None
 
+    item.pop("snapshot_path", None)
     return jsonify(item), 200
 
 
@@ -89,6 +93,16 @@ def serve_snapshot(filename: str):
     face_engine.ensure_dirs()
     snapshots_dir = face_engine.SNAPSHOTS_DIR
     fpath = snapshots_dir / filename
-    if not fpath.exists() or not fpath.is_file():
+    import time
+
+    if (
+        Path(filename).name != filename
+        or fpath.is_symlink()
+        or not fpath.is_file()
+        or fpath.resolve().parent != snapshots_dir.resolve()
+        or fpath.suffix.lower() != ".jpg"
+        or time.time() - fpath.stat().st_mtime
+        > face_engine.get_env_int("SNAPSHOT_RETENTION_DAYS", 2) * 86400
+    ):
         abort(404)
     return send_from_directory(str(snapshots_dir), filename)

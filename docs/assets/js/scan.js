@@ -15,6 +15,7 @@ let currentStream;
  * Mengaktifkan webcam dan menampilkan di elemen video
  */
 function startWebcam(videoElement) {
+    if (!confirm('Saya telah memperoleh persetujuan penghuni untuk memproses dan menyimpan sampel wajah pada server ini. Lanjutkan?')) return;
     const placeholder = document.getElementById('camera-placeholder');
     const faceFrame = document.getElementById('face-frame');
     
@@ -96,7 +97,7 @@ function loadResidentName() {
     
     const titleElement = document.getElementById('scan-title');
     if (residentName && titleElement) {
-        titleElement.textContent = `Pendaftaran Wajah: ${decodeURIComponent(residentName)}`;
+        titleElement.textContent = `Pendaftaran Wajah: ${residentName}`;
     } else if (titleElement) {
         titleElement.textContent = "Pendaftaran Wajah: (Nama Tidak Ditemukan)";
     }
@@ -105,7 +106,7 @@ function loadResidentName() {
 
 
 // ====================================================================
-// LOGIKA CONTINUOUS CAPTURE (500 FRAMES)
+// LOGIKA CONTINUOUS CAPTURE (50 FRAMES)
 // ====================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -120,7 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
-    const totalFrames = 500;
+    const totalFrames = 50;
     
     startButton.addEventListener('click', function initialStart(event) {
         event.preventDefault(); 
@@ -153,8 +154,8 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Logika pengambilan frame
             const canvas = document.createElement('canvas');
-            canvas.width = webcamFeed.videoWidth;
-            canvas.height = webcamFeed.videoHeight;
+            canvas.width = 640;
+            canvas.height = Math.round(640 * webcamFeed.videoHeight / webcamFeed.videoWidth);
             const ctx = canvas.getContext('2d');
             ctx.drawImage(webcamFeed, 0, 0, canvas.width, canvas.height);
             
@@ -169,7 +170,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Mulai interval pengambilan frame (misal 10 frame per detik)
-        const frameRateMs = 100; // 100ms = 10 fps. 500 frames membutuhkan 100 detik.
+        const frameRateMs = 100; // 100ms = 10 fps. 50 frames membutuhkan 100 detik.
         captureInterval = setInterval(captureFrame, frameRateMs);
     });
 });
@@ -186,14 +187,9 @@ async function sendTrainingData(residentName, images) {
          return;
     }
 
-    // NOTE:
-    // Scan 500 sampel menghasilkan multipart form dengan > 500 "parts".
-    // Pada Flask/Werkzeug versi baru, ada limit default jumlah parts (sering 500)
-    // sehingga request bisa ditolak (413/400) SEBELUM sampai ke route.
-    // Solusi paling aman: upload bertahap (batch) + training sekali di akhir.
-
+    // Keep each upload below request and image-count limits.
     const totalImages = images.length;
-    const batchSize = 80; // aman (<< 500 parts)
+    const batchSize = 10;
     const totalBatches = Math.ceil(totalImages / batchSize);
 
     statusElement.textContent = `Mengirim ${totalImages} gambar ke server (batch ${totalBatches}x)...`;
@@ -237,7 +233,7 @@ async function sendTrainingData(residentName, images) {
             });
 
             // train=0 agar training tidak diulang-ulang
-            const uploadResponse = await fetch(MOCK_API_BASE + '/upload/faces?train=0', {
+            const uploadResponse = await apiRequest(MOCK_API_BASE + '/upload/faces?train=0', {
                 method: 'POST',
                 body: formData,
             });
@@ -253,7 +249,7 @@ async function sendTrainingData(residentName, images) {
         // --- 2) TRAINING SEKALI DI AKHIR ---
         statusElement.textContent = 'Upload selesai. Menjalankan training model...';
         try {
-            const trainResp = await fetch(MOCK_API_BASE + '/train', {
+            const trainResp = await apiRequest(MOCK_API_BASE + '/train', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ max_images_per_person: 200 }),
@@ -293,7 +289,7 @@ async function sendTrainingData(residentName, images) {
         let newResident = null;
         if (targetId && !Number.isNaN(targetId)) {
             const updatePayload = { name: residentName, role: 'Penghuni', face_count: finalFaceCount };
-            const updateResp = await fetch(MOCK_API_BASE + `/residents/${targetId}`, {
+            const updateResp = await apiRequest(MOCK_API_BASE + `/residents/${targetId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updatePayload),
@@ -330,11 +326,14 @@ async function sendTrainingData(residentName, images) {
     } finally {
         // Reset button state
         startButton.disabled = false;
-        startButton.textContent = "Mulai Perekaman 500 Sampel";
+        startButton.textContent = "Mulai Perekaman 50 Sampel";
         document.getElementById('scan-progress').style.width = "0%";
-        statusElement.textContent = "Tekan 'Mulai' untuk memulai proses pengambilan 500 sampel.";
+        statusElement.textContent = "Tekan 'Mulai' untuk memulai proses pengambilan 50 sampel.";
         
         // Catatan: listener awal dipasang sekali saat DOMContentLoaded.
         // Tidak perlu re-attach listener di sini.
     }
 }
+
+window.addEventListener('beforeunload', stopWebcam);
+document.addEventListener('DOMContentLoaded', () => {document.getElementById('activate-scan-camera')?.addEventListener('click', () => startWebcam(document.getElementById('webcam-feed')));});

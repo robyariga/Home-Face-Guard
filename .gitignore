@@ -32,3 +32,18 @@ node_modules/
 # --- Build artifacts (kalau nanti ada) ---
 dist/
 build/
+
+# Private configuration and test artifacts
+.env
+.env.*
+!.env.example
+*.db-*
+*.sqlite*
+*.key
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+playwright-report/
+test-results/

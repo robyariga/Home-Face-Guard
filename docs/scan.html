@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pendaftaran Wajah Real-Time | Home Face Guard</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="assets/css/utilities.css">
     <link rel="stylesheet" href="assets/css/style.css"> 
 </head>
 <body>
@@ -26,16 +26,18 @@
                 </div>
 
                 <h2 class="text-2xl font-semibold text-white mb-2">Langkah Pendaftaran</h2>
-                <p class="text-gray-400 mb-6">Posisikan wajah Anda di tengah bingkai dan lakukan gerakan gelengan kepala/perubahan ekspresi secara perlahan. Proses ini akan mengambil **500 sampel**.</p>
+                <p class="text-gray-400 mb-6">Posisikan wajah Anda di tengah bingkai dan lakukan gerakan gelengan kepala/perubahan ekspresi secara perlahan. Proses ini akan mengambil **50 sampel**.</p>
 
+                <button type="button" id="activate-scan-camera" class="bg-blue-600 text-white p-3">Aktifkan kamera</button>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div class="aspect-video bg-gray-900 rounded-lg overflow-hidden border-4 border-dashed border-blue-600/50 flex flex-col items-center justify-center relative">
+                        
                         <video id="webcam-feed" autoplay playsinline class="w-full h-full object-cover rounded-lg absolute inset-0 hidden"></video>
                         
                         <div id="camera-placeholder" class="absolute inset-0 flex items-center justify-center bg-black/40 text-white font-bold text-xl rounded-lg">
                             Siap Mengakses Kamera...
                         </div>
-                        <div id="face-frame" class="absolute w-3/4 h-3/4 border-2 border-red-500 rounded-full hidden"></div>
+                        <div id="face-frame" class="absolute w-3/4 h-3/4 border-2 border-red-50 rounded-full hidden"></div>
                     </div>
 
                     <div class="space-y-4">
@@ -44,7 +46,7 @@
                             <div class="w-full bg-gray-600 rounded-full h-2.5 mt-2">
                                 <div class="bg-blue-600 h-2.5 rounded-full" id="scan-progress" style="width: 0%;"></div>
                             </div>
-                            <p class="text-sm text-blue-400 mt-2" id="scan-status">Tekan "Mulai" untuk memulai proses pengambilan 500 sampel.</p>
+                            <p class="text-sm text-blue-400 mt-2" id="scan-status">Tekan "Mulai" untuk memulai proses pengambilan 50 sampel.</p>
                         </div>
                         
                         <div class="p-4 bg-gray-700/50 rounded-lg space-y-2">
@@ -52,14 +54,14 @@
                             <ul class="list-disc list-inside text-gray-400 text-sm" id="scan-instructions">
                                 <li>Pastikan pencahayaan cukup merata.</li>
                                 <li>Lakukan gerakan kepala/ekspresi secara perlahan.</li>
-                                <li>Proses akan berhenti otomatis setelah 500 sampel.</li>
+                                <li>Proses akan berhenti otomatis setelah 50 sampel.</li>
                             </ul>
                         </div>
 
                         <button id="start-scan-btn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition duration-150">
-                            Mulai Perekaman 500 Sampel
+                            Mulai Perekaman 50 Sampel
                         </button>
-                        <a href="akun.html" class="w-full text-center bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition duration-150 block">
+                        <a href="akun.html" class="w-full text-center bg-gray-50 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition duration-150 block">
                             Batal
                         </a>
                     </div>
@@ -80,14 +82,5 @@
 <script src="assets/js/auth.js"></script>
 <script src="assets/js/nav.js"></script>
 <script src="assets/js/scan.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const webcamElement = document.getElementById('webcam-feed');
-            if (webcamElement) {
-                 startWebcam(webcamElement);
-            }
-        });
-        window.addEventListener('beforeunload', stopWebcam);
-    </script>
 </body>
 </html>

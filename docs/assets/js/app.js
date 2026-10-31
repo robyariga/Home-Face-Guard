@@ -3,7 +3,7 @@
 // ====================================================================
 // API BASE (Render) — PASTIKAN TANPA TRAILING SLASH
 // ====================================================================
-const API_BASE = 'https://home-face-guard.onrender.com/api';
+const API_BASE = '/api';
 const MOCK_API_BASE = API_BASE;
 
 let residents = [];
@@ -15,9 +15,7 @@ let logs = [];
 async function apiFetch(path, options = {}) {
   const url = `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`;
 
-  const res = await fetch(url, {
-    // kalau kamu pakai cookie/session, uncomment baris ini:
-    // credentials: 'include',
+  const res = await apiRequest(url, {
     ...options,
     headers: {
       ...(options.headers || {}),
@@ -111,7 +109,7 @@ async function fetchLogs() {
  * Endpoint: POST /api/residents
  */
 async function addResidentToBackend(residentData) {
-  console.log("API: POSTing /api/residents", residentData);
+
 
   try {
     const data = await apiFetch('/residents', {
@@ -134,7 +132,7 @@ async function addResidentToBackend(residentData) {
  */
 async function checkDatasetExistence(name) {
   if (!name) return { exists: false, face_count: 0 };
-  console.log(`API: Checking dataset for: ${name}`);
+
 
   try {
     const data = await apiFetch(`/check_dataset/${encodeURIComponent(name)}`);
@@ -146,26 +144,6 @@ async function checkDatasetExistence(name) {
   } catch (error) {
     console.error("Error fetching or parsing dataset check:", error);
     return { exists: false, face_count: 0 };
-  }
-}
-
-/**
- * MOCKUP fungsi Edit
- */
-function editResident(id) {
-  alert(`[MOCK] Membuka modal Edit untuk Penghuni ID: ${id}`);
-}
-
-/**
- * MOCKUP fungsi Delete
- */
-function deleteResident(id) {
-  if (confirm(`Yakin ingin menghapus Penghuni ID: ${id}? Data wajah akan dihapus permanen.`)) {
-    console.log(`API: DELETE /api/residents/${id}`);
-    // TODO: Implementasikan fetch DELETE (apiFetch(`/residents/${id}`, { method: 'DELETE' }))
-
-    alert(`[MOCK] Penghuni ID ${id} berhasil dihapus! Silakan refresh halaman.`);
-    window.location.reload();
   }
 }
 
@@ -182,4 +160,32 @@ function dataURLtoBlob(dataurl) {
   while (n--) u8arr[n] = bstr.charCodeAt(n);
 
   return new Blob([u8arr], { type: mime });
+}
+
+
+let sessionUser = null;
+const authReady = fetch('/api/auth/me', {credentials: 'same-origin', cache: 'no-store'})
+  .then(async res => { sessionUser = res.ok ? (await res.json()).user : null; })
+  .catch(() => { sessionUser = null; });
+
+async function apiRequest(url, options = {}) {
+  await authReady;
+  const target = new URL(url, location.origin);
+  if (target.origin !== location.origin || !target.pathname.startsWith('/api/')) {
+    throw new Error('API requests must stay on this server');
+  }
+  const res = await fetch(target, {
+    ...options,
+    credentials: 'same-origin',
+    headers: {...options.headers, 'X-HFG-Request': '1'},
+  });
+  if (res.status === 401 && !target.pathname.endsWith('/auth/login')) {
+    sessionUser = null;
+    if (!location.pathname.includes('login')) location.replace('/login.html');
+  }
+  return res;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 }

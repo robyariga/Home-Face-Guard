@@ -18,20 +18,8 @@ function apiUrl(path) {
   return `${base}${p}`;
 }
 
-function setAuthUser(user) {
-  try {
-    localStorage.setItem('auth_user', JSON.stringify(user || null));
-  } catch (_) {}
-}
-
-function getAuthUser() {
-  try {
-    const raw = localStorage.getItem('auth_user');
-    return raw ? JSON.parse(raw) : null;
-  } catch (_) {
-    return null;
-  }
-}
+function setAuthUser(user) { sessionUser = user; }
+function getAuthUser() { return sessionUser; }
 
 function showFormMessage(el, type, text) {
   if (!el) return;
@@ -51,12 +39,12 @@ async function handleLoginSubmit(e) {
   if (msg) msg.style.display = 'none';
 
   const email = (document.getElementById('login-email')?.value || '').trim();
-  const password = (document.getElementById('login-password')?.value || '').trim();
+  const password = (document.getElementById('login-password')?.value || '');
 
   try {
     if (!AUTH_API_BASE) throw new Error('Konfigurasi API belum siap. Pastikan app.js dimuat.');
 
-    const res = await fetch(apiUrl('/auth/login'), {
+    const res = await apiRequest(apiUrl('/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
@@ -99,7 +87,7 @@ async function handleRegisterSubmit(e) {
   try {
     if (!AUTH_API_BASE) throw new Error('Konfigurasi API belum siap. Pastikan app.js dimuat.');
 
-    const res = await fetch(apiUrl('/auth/register'), {
+    const res = await apiRequest(apiUrl('/auth/register'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, email, password }),
@@ -132,24 +120,22 @@ function isAuthPage() {
   return last === 'login' || last === 'login.html' || last === 'register' || last === 'register.html';
 }
 
-function requireAuth() {
-  // jangan guard di halaman login/register
-  if (isAuthPage()) return;
-
-  const user = getAuthUser();
-  if (!user) {
-    // Netlify paling aman pakai file html
-    location.replace('./login.html');
-  }
+async function requireAuth() {
+  await authReady;
+  if (!isAuthPage() && !getAuthUser()) location.replace('/login.html');
 }
 
-function logout() {
-  setAuthUser(null);
-  try { localStorage.removeItem('auth_user'); } catch (_) {}
-  location.replace('./login.html');
+async function logout() {
+  try {
+    const res = await apiRequest('/api/auth/logout', {method: 'POST'});
+    if (!res.ok) throw new Error('Logout gagal');
+    sessionUser = null;
+    location.replace('/login.html');
+  } catch (error) { alert(error.message); }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await authReady;
   // Bind form sesuai halaman
   const loginForm = document.getElementById('login-form');
   const registerForm = document.getElementById('register-form');

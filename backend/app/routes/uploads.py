@@ -21,11 +21,14 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 
 from .. import face_engine
+from ..database import get_all_residents, update_resident
+from ..security import limiter
 
 upload_bp = Blueprint("uploads", __name__)
 
 
 @upload_bp.route("/upload/faces", methods=["POST"])
+@limiter.limit("30 per minute")
 def upload_faces():
     """Endpoint: POST /api/upload/faces"""
 
@@ -33,7 +36,19 @@ def upload_faces():
     files = request.files.getlist("faces")
 
     if not resident_name or not files:
-        return jsonify({"message": "Error: Nama penghuni dan file wajah diperlukan."}), 400
+        return jsonify(
+            {"message": "Error: Nama penghuni dan file wajah diperlukan."}
+        ), 400
+
+    if len(files) > 50:
+        return jsonify(message="At most 50 images per request"), 400
+    safe = face_engine.make_safe_name(resident_name)
+    for resident in get_all_residents():
+        if (
+            face_engine.make_safe_name(resident["name"]).casefold() == safe.casefold()
+            and resident["name"] != resident_name.strip()
+        ):
+            return jsonify(message="Name conflicts with an existing dataset"), 409
 
     # Opsional: control training via query param ?train=0
     train_flag = request.args.get("train", "1").lower() not in {"0", "false", "no"}
@@ -49,8 +64,10 @@ def upload_faces():
 
     try:
         result = face_engine.save_processed_faces(resident_name, iter_bytes())
-    except Exception as e:
-        return jsonify({"message": f"Gagal memproses upload: {e}"}), 500
+    except ValueError:
+        raise
+    except Exception:
+        return jsonify(message="Gagal memproses upload"), 500
 
     if int(result.get("saved", 0)) == 0:
         # Tidak ada wajah yang terdeteksi dari semua frame
@@ -67,20 +84,27 @@ def upload_faces():
             }
         ), 422
 
+    for resident in get_all_residents():
+        if resident["name"] == resident_name.strip():
+            update_resident(
+                resident["id"], resident["name"], resident["role"], int(result["total"])
+            )
     training_summary = None
     training_error = None
 
     if train_flag:
         try:
             max_imgs = face_engine.get_env_int("MAX_TRAIN_IMAGES_PER_PERSON", 200)
-            training_summary = face_engine.train_lbph_model(max_images_per_person=max_imgs)
-        except Exception as e:
+            training_summary = face_engine.train_lbph_model(
+                max_images_per_person=max_imgs
+            )
+        except Exception:
             # Training gagal tidak memblokir upload; kirim sebagai warning.
-            training_error = str(e)
+            training_error = (
+                "Training unavailable; register resident metadata and train again"
+            )
 
-    msg = (
-        f"Berhasil memproses {result['saved']} wajah (skip {result['skipped']}) untuk {resident_name}."
-    )
+    msg = f"Berhasil memproses {result['saved']} wajah (skip {result['skipped']}) untuk {resident_name}."
     if training_error:
         msg += f" Namun training model gagal: {training_error}"
 

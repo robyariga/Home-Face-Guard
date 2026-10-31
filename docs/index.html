@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard | Home Face Guard</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="assets/css/utilities.css">
     <link rel="stylesheet" href="assets/css/style.css"> 
 </head>
 <body>
@@ -25,9 +25,9 @@
                         Live Camera Feed
                     </h2>
                     <div class="aspect-video bg-gray-900 rounded-lg overflow-hidden border-2 border-blue-500/50 flex items-center justify-center text-gray-500">
-                        <span class="text-2xl">Streaming Kamera Aktif...</span>
+                        <button id="start-camera-btn" type="button" class="bg-blue-600 text-white p-3 rounded-lg">Aktifkan kamera</button>
                     </div>
-                    <p class="mt-4 text-sm text-gray-400">Status: <span class="text-green-400 font-medium">Aktif, Merekam</span></p>
+                    <p class="mt-4 text-sm text-gray-400">Status: <span class="text-green-400 font-medium">Kamera belum aktif</span></p>
                 </div>
 
                 <div class="lg:col-span-1 bg-[#252a34] p-6 rounded-xl shadow-2xl border border-blue-900/50">
