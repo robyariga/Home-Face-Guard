@@ -18,10 +18,10 @@ Before a stable release:
 The optional manual `prepare-source` workflow archives tracked source. It does not
 create a tag, release or deployment. Never include runtime biometric data or secrets.
 
-Suggested repository description (not automatically applied):
+Repository About description applied during this maintenance:
 `Local-first face recognition prototype with resident enrollment, Unknown detection and a Flask dashboard.`
 
-Suggested topics: `python`, `flask`, `opencv`, `face-recognition`, `privacy`, `prototype`.
+Topics applied: `python`, `flask`, `opencv`, `face-recognition`, `privacy`, `prototype`.
 These describe implementation, not certification. No user, star, download or adoption
 statistics are invented. State licensing/release readiness accurately in applications
 to any external program; acceptance is not established by this work.
