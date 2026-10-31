@@ -32,7 +32,7 @@ audit or field deployment verification. Existing installations need account revi
 retraining and private backup/migration management. Retained Unknown full frames can
 contain several people; deletion does not erase backups or recoverable storage.
 
-Code changes are proposed in PR #1. The empty repository About description and topics
+Code changes were delivered through PR #1, now merged. The empty About description and topics
 were filled with factual implementation details using the authenticated local GitHub
 access. Running deployments remain unchanged. No release is published and no adoption
 evidence is fabricated. Full release gates are in `RELEASE.md`.
