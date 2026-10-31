@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   try {
-    const res = await fetch(MOCK_API_BASE + '/events/' + encodeURIComponent(id));
+    const res = await apiRequest(MOCK_API_BASE + '/events/' + encodeURIComponent(id));
     if (!res.ok) throw new Error('Gagal memuat detail (HTTP ' + res.status + ')');
     const item = await res.json();
 
@@ -34,14 +34,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (snapUrl && typeof snapUrl === 'string' && snapUrl.startsWith('/')) snapUrl = MOCK_API_BASE + snapUrl;
 
     const snapshot = snapUrl
-      ? `<img src="${item.snapshot_url}" alt="Snapshot" class="mt-4 w-full rounded-xl border border-blue-900/50" />`
+      ? `<img src="${escapeHtml(item.snapshot_url)}" alt="Snapshot" class="mt-4 w-full rounded-xl border border-blue-900/50" />`
       : `<div class="mt-4 p-4 rounded-xl bg-gray-800 text-gray-300 border border-blue-900/30">Snapshot tidak tersedia (penghematan storage untuk PENGHUNI).</div>`;
 
     container.innerHTML = `
       <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
         <div>
           <div class="text-2xl font-bold text-white">${escapeHtml(name)}</div>
-          <div class="mt-2 inline-block px-3 py-1 rounded-full text-xs font-bold ${badgeClass}">${category}</div>
+          <div class="mt-2 inline-block px-3 py-1 rounded-full text-xs font-bold ${badgeClass}">${escapeHtml(category)}</div>
           <div class="mt-4 text-gray-300">
             <div><span class="text-gray-400">Waktu:</span> <span class="text-white">${time}</span></div>
             <div><span class="text-gray-400">Tanggal:</span> <span class="text-white">${date}</span></div>

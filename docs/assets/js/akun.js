@@ -5,6 +5,13 @@ if (typeof fetchResidents === 'undefined' || typeof addResidentToBackend === 'un
     console.error('Error: app.js belum dimuat dengan lengkap. Pastikan app.js dimuat terlebih dahulu.');
 } else {
     document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('add-resident-form')?.addEventListener('submit', e => {e.preventDefault(); addResident(e);});
+        document.getElementById('residents-list')?.addEventListener('click', e => {
+            const button = e.target.closest('button[data-id]');
+            if (!button) return;
+            const id = Number(button.dataset.id);
+            if (button.dataset.action === 'edit') editResident(id); else deleteResident(id);
+        });
         renderResidents();
         
         const nameInput = document.getElementById('new-resident-name');
@@ -45,13 +52,13 @@ async function renderResidents() {
             const residentItem = `
                 <li class="flex justify-between items-center p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 transition duration-150">
                     <div>
-                        <p class="font-medium text-white">${resident.name}</p>
-                        <span class="text-sm text-gray-400">${role}</span>
+                        <p class="font-medium text-white">${escapeHtml(resident.name)}</p>
+                        <span class="text-sm text-gray-400">${escapeHtml(role)}</span>
                         <span class="text-xs ml-2 ${faceCount > 0 ? 'text-green-400' : 'text-yellow-400'}">(${faceCount} sampel wajah)</span>
                     </div>
                     <div class="space-x-2">
-                        <button onclick="editResident(${resident.id})" class="text-yellow-400 hover:text-yellow-300 text-sm font-medium">Edit</button>
-                        <button onclick="deleteResident(${resident.id}, '${resident.name}')" class="text-red-400 hover:text-red-300 text-sm font-medium">Hapus</button>
+                        <button data-action="edit" data-id="${resident.id}" class="text-yellow-400 hover:text-yellow-300 text-sm font-medium">Edit</button>
+                        <button data-action="delete" data-id="${resident.id}" class="text-red-400 hover:text-red-300 text-sm font-medium">Hapus</button>
                     </div>
                 </li>
             `;
@@ -135,6 +142,7 @@ async function addResident(event) {
     const residentData = { name, role };
 
     try {
+        if (photoInput.files.length && !confirm('Saya telah memperoleh persetujuan penghuni untuk menyimpan dan memproses foto wajahnya. Lanjutkan?')) return;
         // 1. Cek dataset yang ada
         const datasetInfo = await checkDatasetExistence(name);
         faceCount = datasetInfo.face_count; // Set default faceCount dari dataset lama (bisa 0)
@@ -151,7 +159,7 @@ async function addResident(event) {
              }
  
              submitButton.textContent = 'Mengunggah Foto...';
-             const uploadResponse = await fetch(MOCK_API_BASE + '/upload/faces', {
+             const uploadResponse = await apiRequest(MOCK_API_BASE + '/upload/faces', {
                  method: 'POST',
                  body: formData, 
              });
@@ -198,13 +206,14 @@ function editResident(id) {
 /**
  * Fungsi Delete: Hapus metadata dan dataset (DELETE)
  */
-async function deleteResident(id, name) {
+async function deleteResident(id) {
+    const name = 'ID ' + id;
     if (!confirm(`Yakin ingin menghapus Penghuni: ${name}? Operasi ini akan menghapus data metadata dari database DAN folder dataset wajah di server secara permanen.`)) {
         return;
     }
 
     try {
-        const response = await fetch(MOCK_API_BASE + `/residents/${id}`, {
+        const response = await apiRequest(MOCK_API_BASE + `/residents/${id}`, {
             method: 'DELETE'
         });
 

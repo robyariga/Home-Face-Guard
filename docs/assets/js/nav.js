@@ -48,7 +48,8 @@ function isAuthPage(){
       </button>`;
   }
 
-  function renderNavbar(){
+  async function renderNavbar(){
+    await authReady;
     const mount = document.getElementById('app-navbar');
     if(!mount) return;
 

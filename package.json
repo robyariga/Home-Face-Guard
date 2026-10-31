@@ -1,0 +1,11 @@
+{
+  "name": "home-face-guard-ui",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i styles/input.css -o docs/assets/css/utilities.css --minify",
+    "test": "node --test tests/ui.test.cjs"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.19"
+  }
+}

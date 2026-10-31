@@ -1,5 +1,5 @@
 /* frontend/assets/css/style.css */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+
 
 :root{
   --bg: #1a1e28;
@@ -34,7 +34,7 @@ html, body{
 }
 
 body{
-  font-family: 'Inter', sans-serif;
+  font-family: system-ui, sans-serif;
   background-color: var(--bg);
   color: var(--text);
 }
